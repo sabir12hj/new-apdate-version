@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import cors from "cors";
+import { createProxyMiddleware } from "http-proxy-middleware";
 
 const app = express();
 
@@ -15,6 +16,16 @@ app.use(cors({
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Proxy middleware to forward requests to the external API
+app.use(
+  "/api/external",
+  createProxyMiddleware({
+    target: "https://extensions.aitopia.ai",
+    changeOrigin: true,
+    pathRewrite: { "^/api/external": "" },
+  })
+);
 
 app.use((req, res, next) => {
   const start = Date.now();
