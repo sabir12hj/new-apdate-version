@@ -115,8 +115,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tournaments = await storage.getLiveTournaments();
       res.json(tournaments);
     } catch (error) {
-      console.error('Error in /tournaments/live:', error);
-      res.status(500).json({ message: 'Server error' });
+      console.error("Error in /tournaments/live:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
     }
   });
 
@@ -126,8 +126,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tournaments = await storage.getUpcomingTournaments();
       res.json(tournaments);
     } catch (error) {
-      console.error('Error in /tournaments/upcoming:', error);
-      res.status(500).json({ message: 'Server error' });
+      console.error("Error in /tournaments/upcoming:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
     }
   });
 
@@ -789,8 +789,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(winnersWithInfo);
     } catch (error) {
-      console.error('Error in /winners/recent:', error);
-      res.status(500).json({ message: 'Server error' });
+      console.error("Error in /winners/recent:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
     }
   });
 
