@@ -1,0 +1,34 @@
+{
+    "name": "quizbattle-client",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+      "dev": "vite",
+      "build": "vite build",
+      "preview": "vite preview"
+    },
+    "dependencies": {
+      "react": "^18.3.1",
+      "react-dom": "^18.3.1",
+      "react-hook-form": "^7.55.0",
+      "react-icons": "^5.4.0",
+      "react-day-picker": "^8.10.1",
+      "react-resizable-panels": "^2.1.7",
+      "wouter": "^3.3.5",
+      "framer-motion": "^11.13.1",
+      "clsx": "^2.1.1",
+      "zod": "^3.24.2",
+      "axios": "^1.9.0"
+    },
+    "devDependencies": {
+      "@types/react": "^18.3.11",
+      "@types/react-dom": "^18.3.1",
+      "@vitejs/plugin-react": "^4.3.2",
+      "tailwindcss": "^3.4.17",
+      "autoprefixer": "^10.4.20",
+      "postcss": "^8.4.47",
+      "typescript": "^5.6.3",
+      "vite": "^5.4.14"
+    }
+  }
+  
