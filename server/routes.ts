@@ -105,7 +105,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tournaments = await storage.getAllTournaments();
       res.json(tournaments);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      console.error("Error in /api/tournaments:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
     }
   });
 
@@ -789,7 +790,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(winnersWithInfo);
     } catch (error) {
-      console.error("Error in /winners/recent:", error);
+      console.error("Error in /api/winners/recent:", error);
       res.status(500).json({ message: "Server error", error: error.message });
     }
   });
