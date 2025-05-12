@@ -8,6 +8,7 @@ import { User, InsertUser, insertUserSchema } from '@shared/schema';
 import { log } from './vite';
 import { ZodError } from 'zod';
 import { fromZodError } from 'zod-validation-error';
+import { JWTPayload } from './types';
 
 // JWT secret (in production, this should be an environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'quiz-tournament-secret';
@@ -42,8 +43,8 @@ passport.use(
   )
 );
 
-// User serialization and deserialization
-passport.serializeUser((user: User, done) => {
+// Initialize passport serialization
+passport.serializeUser<number>((user: any, done) => {
   done(null, user.id);
 });
 
@@ -58,19 +59,20 @@ passport.deserializeUser(async (id: number, done) => {
 
 // Generate JWT token for a user
 export const generateToken = (user: User): string => {
-  const payload = {
+  const payload: JWTPayload = {
     userId: user.id,
     email: user.email,
-    isAdmin: user.isAdmin,
+    isAdmin: user.isAdmin || false,
   };
   
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 };
 
 // Verify JWT token
-export const verifyToken = (token: string): any => {
+export const verifyToken = (token: string): JWTPayload => {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload;
+    return decoded;
   } catch (error) {
     throw new Error('Invalid token');
   }
@@ -117,53 +119,102 @@ export const registerUser = async (userData: InsertUser): Promise<{ user: User; 
 };
 
 // Login middleware
-export const login = (req: Request, res: Response, next: NextFunction) => {
-  passport.authenticate('local', { session: false }, (err: Error, user: User, info: { message: string }) => {
-    if (err) {
-      return next(err);
-    }
-    
+export const login = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await storage.getUserByEmail(email);
     if (!user) {
-      return res.status(401).json({ message: info.message });
+      return res.status(401).json({ 
+        message: 'Incorrect email or password',
+        code: 'INVALID_CREDENTIALS'
+      });
     }
-    
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ 
+        message: 'Incorrect email or password',
+        code: 'INVALID_CREDENTIALS'
+      });
+    }
+
     const token = generateToken(user);
     
+    // Remove sensitive data before sending response
+    const { password: _, ...userData } = user;
+
     return res.json({
       message: 'Login successful',
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        wallet: user.wallet
-      },
+      user: userData,
       token,
     });
-  })(req, res, next);
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({ 
+      message: 'Server error during login',
+      code: 'LOGIN_ERROR'
+    });
+  }
 };
 
 // Register middleware
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { user, token } = await registerUser(req.body);
+    // Validate user data
+    const userData = insertUserSchema.parse(req.body);
     
+    // Check if user already exists
+    const existingEmail = await storage.getUserByEmail(userData.email);
+    if (existingEmail) {
+      return res.status(400).json({ 
+        message: 'Email already in use',
+        code: 'EMAIL_EXISTS'
+      });
+    }
+    
+    const existingUsername = await storage.getUserByUsername(userData.username);
+    if (existingUsername) {
+      return res.status(400).json({ 
+        message: 'Username already in use',
+        code: 'USERNAME_EXISTS'
+      });
+    }
+    
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(userData.password, salt);
+    
+    // Create user
+    const user = await storage.createUser({
+      ...userData,
+      password: hashedPassword,
+    });
+
+    // Generate token
+    const token = generateToken(user);
+    
+    // Remove sensitive data before sending response
+    const { password: _, ...cleanUserData } = user;
+
     return res.status(201).json({
       message: 'Registration successful',
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        wallet: user.wallet
-      },
+      user: cleanUserData,
       token,
     });
   } catch (error) {
-    if (error instanceof Error) {
-      return res.status(400).json({ message: error.message });
+    if (error instanceof ZodError) {
+      const validationError = fromZodError(error);
+      return res.status(400).json({ 
+        message: validationError.message,
+        code: 'VALIDATION_ERROR'
+      });
     }
-    next(error);
+    console.error('Registration error:', error);
+    return res.status(500).json({ 
+      message: 'Server error during registration',
+      code: 'REGISTRATION_ERROR'
+    });
   }
 };
 

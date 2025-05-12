@@ -2,7 +2,7 @@ import express, { type Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { login, register, googleAuthMock, generateToken } from "./auth";
-import { authenticateJWT, requireAdmin, canAccessTournament } from "./middlewares";
+import { authenticateJWT, requireAdmin, canAccessTournament, type AuthenticatedRequest } from "./middlewares";
 import { insertTournamentSchema, insertQuizSchema, insertQuestionSchema, updateProfileSchema } from "@shared/schema";
 import { z } from "zod";
 import { fromZodError } from "zod-validation-error";
@@ -19,7 +19,120 @@ export async function registerRoutes(app: Express): Promise<Server> {
   apiRouter.post("/auth/register", register);
   apiRouter.post("/auth/google", googleAuthMock);
   apiRouter.post("/auth/google-token", handleGoogleAuth);
-  
+
+  // Public routes that don't require authentication
+  apiRouter.get("/winners/recent", async (_req: Request, res: Response) => {
+    try {
+      const recentWinners = await storage.getRecentWinners();
+      
+      // Add user info and tournament info to winners (exclude sensitive data)
+      const winnersWithInfo = await Promise.all(
+        recentWinners.map(async (winner, index) => {
+          const user = await storage.getUser(winner.userId);
+          const tournament = await storage.getTournament(winner.tournamentId);
+          return {
+            ...winner,
+            rank: index + 1,
+            username: user?.username,
+            tournamentName: tournament?.name
+          };
+        })
+      );
+      
+      res.json(winnersWithInfo);
+    } catch (error) {
+      console.error("Error in /api/winners/recent:", error);
+      res.status(500).json({ 
+        message: "Failed to fetch recent winners",
+        code: "FETCH_ERROR"
+      });
+    }
+  });
+
+  // Get live tournaments
+  apiRouter.get("/tournaments/live", async (_req: Request, res: Response) => {
+    try {
+      const now = new Date();
+      const tournaments = await storage.getAllTournaments();
+      
+      const liveTournaments = tournaments.filter(t => {
+        const startTime = new Date(t.startTime);
+        const endTime = new Date(t.endTime);
+        return startTime <= now && endTime >= now;
+      });
+
+      // Add participant count and sanitize data
+      const tournamentsWithCounts = await Promise.all(
+        liveTournaments.map(async (tournament) => {
+          const participants = await storage.getParticipantsByTournament(tournament.id);
+          // Only include necessary public information
+          return {
+            id: tournament.id,
+            name: tournament.name,
+            startTime: tournament.startTime,
+            endTime: tournament.endTime,
+            entryFee: tournament.entryFee,
+            prizePool: tournament.prizePool,
+            description: tournament.description,
+            participantCount: participants.length,
+            totalSlots: tournament.totalSlots,
+            rules: tournament.rules,
+            resultPublished: tournament.resultPublished
+          };
+        })
+      );
+      
+      res.json(tournamentsWithCounts);
+    } catch (error) {
+      console.error("Error in /tournaments/live:", error);
+      res.status(500).json({ 
+        message: "Failed to fetch live tournaments",
+        code: "FETCH_ERROR"
+      });
+    }
+  });
+
+  // Get upcoming tournaments
+  apiRouter.get("/tournaments/upcoming", async (_req: Request, res: Response) => {
+    try {
+      const now = new Date();
+      const tournaments = await storage.getAllTournaments();
+      
+      const upcomingTournaments = tournaments.filter(t => {
+        const startTime = new Date(t.startTime);
+        return startTime > now;
+      });
+
+      // Add participant count and sanitize data
+      const tournamentsWithCounts = await Promise.all(
+        upcomingTournaments.map(async (tournament) => {
+          const participants = await storage.getParticipantsByTournament(tournament.id);
+          // Only include necessary public information
+          return {
+            id: tournament.id,
+            name: tournament.name,
+            startTime: tournament.startTime,
+            endTime: tournament.endTime,
+            entryFee: tournament.entryFee,
+            prizePool: tournament.prizePool,
+            description: tournament.description,
+            participantCount: participants.length,
+            totalSlots: tournament.totalSlots,
+            rules: tournament.rules
+          };
+        })
+      );
+      
+      res.json(tournamentsWithCounts);
+    } catch (error) {
+      console.error("Error in /tournaments/upcoming:", error);
+      res.status(500).json({ 
+        message: "Failed to fetch upcoming tournaments",
+        code: "FETCH_ERROR"
+      });
+    }
+  });
+
   // For testing only: Endpoint to create an admin user
   apiRouter.post("/auth/create-admin", async (req: Request, res: Response) => {
     try {
@@ -79,7 +192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Verify token and get current user
-  apiRouter.get("/auth/user", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.get("/auth/user", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const user = await storage.getUser(req.user!.userId);
       
@@ -110,28 +223,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get live tournaments
-  apiRouter.get("/tournaments/live", async (req: Request, res: Response) => {
-    try {
-      const tournaments = await storage.getLiveTournaments();
-      res.json(tournaments);
-    } catch (error) {
-      console.error("Error in /tournaments/live:", error);
-      res.status(500).json({ message: "Server error", error: error.message });
-    }
-  });
-
-  // Get upcoming tournaments
-  apiRouter.get("/tournaments/upcoming", async (req: Request, res: Response) => {
-    try {
-      const tournaments = await storage.getUpcomingTournaments();
-      res.json(tournaments);
-    } catch (error) {
-      console.error("Error in /tournaments/upcoming:", error);
-      res.status(500).json({ message: "Server error", error: error.message });
-    }
-  });
-
   // Get single tournament
   apiRouter.get("/tournaments/:id", async (req: Request, res: Response) => {
     try {
@@ -153,7 +244,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Create tournament
-  apiRouter.post("/tournaments", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.post("/tournaments", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const validatedData = insertTournamentSchema.parse(req.body);
       const tournament = await storage.createTournament(validatedData);
@@ -168,7 +259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Update tournament
-  apiRouter.put("/tournaments/:id", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.put("/tournaments/:id", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -195,7 +286,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Delete tournament
-  apiRouter.delete("/tournaments/:id", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.delete("/tournaments/:id", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -214,8 +305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Admin: Publish tournament results
-  apiRouter.post("/tournaments/:id/publish-results", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.post("/tournaments/:id/publish-results", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -256,7 +346,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Create quiz for a tournament
-  apiRouter.post("/quizzes", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.post("/quizzes", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const validatedData = insertQuizSchema.parse(req.body);
       
@@ -284,7 +374,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Update quiz
-  apiRouter.put("/quizzes/:id", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.put("/quizzes/:id", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -311,7 +401,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Delete quiz
-  apiRouter.delete("/quizzes/:id", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.delete("/quizzes/:id", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -354,7 +444,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get questions for a quiz (admin view with answers)
-  apiRouter.get("/admin/quizzes/:id/questions", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.get("/admin/quizzes/:id/questions", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const quizId = parseInt(req.params.id);
       if (isNaN(quizId)) {
@@ -369,7 +459,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Create question
-  apiRouter.post("/questions", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.post("/questions", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const validatedData = insertQuestionSchema.parse(req.body);
       
@@ -391,7 +481,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Update question
-  apiRouter.put("/questions/:id", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.put("/questions/:id", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -418,7 +508,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin: Delete question
-  apiRouter.delete("/questions/:id", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.delete("/questions/:id", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) {
@@ -439,7 +529,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Participant routes
   // Join tournament (payment)
-  apiRouter.post("/tournaments/:id/join", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.post("/tournaments/:id/join", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const tournamentId = parseInt(req.params.id);
       if (isNaN(tournamentId)) {
@@ -529,7 +619,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get tournament participants
-  apiRouter.get("/tournaments/:id/participants", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.get("/tournaments/:id/participants", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const tournamentId = parseInt(req.params.id);
       if (isNaN(tournamentId)) {
@@ -564,7 +654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Quiz attempt routes
   // Start quiz
-  apiRouter.post("/tournaments/:id/start-quiz", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.post("/tournaments/:id/start-quiz", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const tournamentId = parseInt(req.params.id);
       if (isNaN(tournamentId)) {
@@ -627,7 +717,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Submit answer
-  apiRouter.post("/tournaments/:id/submit-answer", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.post("/tournaments/:id/submit-answer", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const tournamentId = parseInt(req.params.id);
       if (isNaN(tournamentId)) {
@@ -659,7 +749,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Get the question
-      const question = await storage.questions.get(questionId);
+      const question = await storage.getQuestion(questionId);
       if (!question) {
         return res.status(404).json({ message: 'Question not found' });
       }
@@ -687,7 +777,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Finish quiz
-  apiRouter.post("/tournaments/:id/finish-quiz", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.post("/tournaments/:id/finish-quiz", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const tournamentId = parseInt(req.params.id);
       if (isNaN(tournamentId)) {
@@ -731,7 +821,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Leaderboard routes
   // Get tournament leaderboard
-  apiRouter.get("/tournaments/:id/leaderboard", async (req: Request, res: Response) => {
+  apiRouter.get("/tournaments/:id/leaderboard", async (req: AuthenticatedRequest, res: Response) => {
     try {
       const tournamentId = parseInt(req.params.id);
       if (isNaN(tournamentId)) {
@@ -769,35 +859,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get recent winners
-  apiRouter.get("/winners/recent", async (req: Request, res: Response) => {
-    try {
-      const recentWinners = await storage.getRecentWinners();
-      
-      // Add user info and tournament info to winners
-      const winnersWithInfo = await Promise.all(
-        recentWinners.map(async (winner, index) => {
-          const user = await storage.getUser(winner.userId);
-          const tournament = await storage.getTournament(winner.tournamentId);
-          return {
-            ...winner,
-            rank: index + 1,
-            username: user?.username,
-            tournamentName: tournament?.name
-          };
-        })
-      );
-      
-      res.json(winnersWithInfo);
-    } catch (error) {
-      console.error("Error in /api/winners/recent:", error);
-      res.status(500).json({ message: "Server error", error: error.message });
-    }
-  });
-
   // Wallet operations
   // Get user wallet
-  apiRouter.get("/wallet", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.get("/wallet", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
       
@@ -815,7 +879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Add money to wallet (mock)
-  apiRouter.post("/wallet/add", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.post("/wallet/add", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
       const { amount } = req.body;
@@ -839,7 +903,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get user profile
-  apiRouter.get("/profile", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.get("/profile", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
       const user = await storage.getUser(userId);
@@ -858,7 +922,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update user profile
-  apiRouter.put("/profile", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.put("/profile", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
       
@@ -892,7 +956,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Upload profile picture (base64)
-  apiRouter.post("/profile/photo", authenticateJWT, async (req: Request, res: Response) => {
+  apiRouter.post("/profile/photo", authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user!.userId;
       const { photo } = req.body;
@@ -922,7 +986,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin dashboard stats
-  apiRouter.get("/admin/stats", authenticateJWT, requireAdmin, async (req: Request, res: Response) => {
+  apiRouter.get("/admin/stats", authenticateJWT, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const tournaments = await storage.getAllTournaments();
       const liveTournaments = await storage.getLiveTournaments();
