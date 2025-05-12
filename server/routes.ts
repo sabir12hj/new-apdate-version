@@ -20,6 +20,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   apiRouter.post("/auth/google", googleAuthMock);
   apiRouter.post("/auth/google-token", handleGoogleAuth);
 
+  // TEMPORARY: Create admin user endpoint
+  apiRouter.post("/auth/temp-create-admin", async (req: Request, res: Response) => {
+    try {
+      const username = "admin";
+      const email = "admin@example.com";
+      const password = "admin123";
+      // Check if user already exists
+      const existingEmail = await storage.getUserByEmail(email);
+      if (existingEmail) {
+        return res.status(400).json({ message: "Admin user already exists" });
+      }
+      // Hash password
+      const bcrypt = require("bcryptjs");
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+      // Create admin user
+      const userData = {
+        username,
+        email,
+        password: hashedPassword,
+        isAdmin: true,
+      };
+      const adminUser = await storage.createUser(userData, true);
+      res.status(201).json({
+        message: "Admin user created",
+        user: { username, email, password: "admin123" },
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create admin user", error: error.message });
+    }
+  });
+
   // Public routes that don't require authentication
   apiRouter.get("/winners/recent", async (_req: Request, res: Response) => {
     try {
