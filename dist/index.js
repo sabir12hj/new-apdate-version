@@ -181,13 +181,68 @@ var insertUserResponseSchema = createInsertSchema(userResponses).omit({
 });
 
 // server/db.ts
-neonConfig.webSocketConstructor = ws;
+var WebSocketWithRetry = class _WebSocketWithRetry extends ws {
+  maxRetries = 5;
+  retryCount = 0;
+  retryDelay = 1e3;
+  wsUrl;
+  wsOptions;
+  constructor(url, options) {
+    super(url, options);
+    this.wsUrl = url;
+    this.wsOptions = options;
+    this.addEventListener("error", this.handleError.bind(this));
+  }
+  handleError(error) {
+    console.error("WebSocket error:", error.message);
+    if (this.retryCount < this.maxRetries) {
+      const delay = this.retryDelay * Math.pow(2, this.retryCount);
+      console.log(`Retrying connection in ${delay}ms... (Attempt ${this.retryCount + 1}/${this.maxRetries})`);
+      setTimeout(() => {
+        this.retryCount++;
+        new _WebSocketWithRetry(this.wsUrl, this.wsOptions);
+      }, delay);
+    } else {
+      console.error("Max retries reached. Please check your database connection.");
+    }
+  }
+};
+neonConfig.webSocketConstructor = WebSocketWithRetry;
 if (!process.env.DATABASE_URL) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?"
   );
 }
-var pool = new Pool({ connectionString: process.env.DATABASE_URL });
+var connectionString = process.env.DATABASE_URL;
+console.log("Connecting to database...");
+var pool = new Pool({
+  connectionString,
+  ssl: true,
+  max: 20,
+  // maximum number of clients in the pool
+  idleTimeoutMillis: 3e4,
+  // how long a client is allowed to remain idle before being closed
+  connectionTimeoutMillis: 5e3,
+  // how long to wait for a connection
+  maxUses: 7500
+  // close & replace a connection after it's been used this many times
+});
+var connectWithRetry = async (retries = 5) => {
+  try {
+    const client = await pool.connect();
+    console.log("Database connected successfully");
+    client.release();
+  } catch (err) {
+    if (retries > 0) {
+      console.log(`Retrying database connection... (${retries} attempts left)`);
+      await new Promise((resolve) => setTimeout(resolve, 2e3));
+      return connectWithRetry(retries - 1);
+    }
+    console.error("Database connection error:", err);
+    throw err;
+  }
+};
+connectWithRetry().catch(console.error);
 var db = drizzle({ client: pool, schema: schema_exports });
 
 // server/storage.ts
@@ -482,27 +537,66 @@ var generateToken = (user) => {
   const payload = {
     userId: user.id,
     email: user.email,
-    isAdmin: user.isAdmin
+    isAdmin: user.isAdmin || false
   };
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 };
 var verifyToken = (token) => {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded;
   } catch (error) {
     throw new Error("Invalid token");
   }
 };
-var registerUser = async (userData) => {
+var login = async (req, res, next) => {
   try {
-    insertUserSchema.parse(userData);
+    const { email, password } = req.body;
+    const user = await storage.getUserByEmail(email);
+    if (!user) {
+      return res.status(401).json({
+        message: "Incorrect email or password",
+        code: "INVALID_CREDENTIALS"
+      });
+    }
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({
+        message: "Incorrect email or password",
+        code: "INVALID_CREDENTIALS"
+      });
+    }
+    const token = generateToken(user);
+    const { password: _, ...userData } = user;
+    return res.json({
+      message: "Login successful",
+      user: userData,
+      token
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    return res.status(500).json({
+      message: "Server error during login",
+      code: "LOGIN_ERROR"
+    });
+  }
+};
+var register = async (req, res, next) => {
+  try {
+    const userData = insertUserSchema.parse(req.body);
     const existingEmail = await storage.getUserByEmail(userData.email);
     if (existingEmail) {
-      throw new Error("Email already in use");
+      return res.status(400).json({
+        message: "Email already in use",
+        code: "EMAIL_EXISTS"
+      });
     }
     const existingUsername = await storage.getUserByUsername(userData.username);
     if (existingUsername) {
-      throw new Error("Username already in use");
+      return res.status(400).json({
+        message: "Username already in use",
+        code: "USERNAME_EXISTS"
+      });
     }
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(userData.password, salt);
@@ -511,56 +605,25 @@ var registerUser = async (userData) => {
       password: hashedPassword
     });
     const token = generateToken(user);
-    return { user, token };
+    const { password: _, ...cleanUserData } = user;
+    return res.status(201).json({
+      message: "Registration successful",
+      user: cleanUserData,
+      token
+    });
   } catch (error) {
     if (error instanceof ZodError) {
       const validationError = fromZodError(error);
-      throw new Error(validationError.message);
+      return res.status(400).json({
+        message: validationError.message,
+        code: "VALIDATION_ERROR"
+      });
     }
-    throw error;
-  }
-};
-var login = (req, res, next) => {
-  passport.authenticate("local", { session: false }, (err, user, info) => {
-    if (err) {
-      return next(err);
-    }
-    if (!user) {
-      return res.status(401).json({ message: info.message });
-    }
-    const token = generateToken(user);
-    return res.json({
-      message: "Login successful",
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        wallet: user.wallet
-      },
-      token
+    console.error("Registration error:", error);
+    return res.status(500).json({
+      message: "Server error during registration",
+      code: "REGISTRATION_ERROR"
     });
-  })(req, res, next);
-};
-var register = async (req, res, next) => {
-  try {
-    const { user, token } = await registerUser(req.body);
-    return res.status(201).json({
-      message: "Registration successful",
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        wallet: user.wallet
-      },
-      token
-    });
-  } catch (error) {
-    if (error instanceof Error) {
-      return res.status(400).json({ message: error.message });
-    }
-    next(error);
   }
 };
 var googleAuthMock = async (req, res, next) => {
@@ -603,29 +666,58 @@ var googleAuthMock = async (req, res, next) => {
 };
 
 // server/middlewares.ts
+var PUBLIC_ROUTES = [
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/google",
+  "/api/auth/google/callback",
+  "/api/tournaments",
+  "/api/winners/recent",
+  "/api/tournaments/live",
+  "/api/tournaments/upcoming"
+];
 var authenticateJWT = (req, res, next) => {
+  if (PUBLIC_ROUTES.includes(req.path)) {
+    return next();
+  }
   const authHeader = req.headers.authorization;
   if (!authHeader) {
-    return res.status(401).json({ message: "Authorization header missing" });
+    return res.status(401).json({
+      message: "Authorization header missing",
+      code: "AUTH_HEADER_MISSING"
+    });
   }
   const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).json({ message: "Token missing" });
+    return res.status(401).json({
+      message: "Token missing",
+      code: "TOKEN_MISSING"
+    });
   }
   try {
     const decoded = verifyToken(token);
     req.user = decoded;
     next();
   } catch (error) {
-    return res.status(401).json({ message: "Invalid or expired token" });
+    console.error("Token verification error:", error);
+    return res.status(401).json({
+      message: "Invalid or expired token",
+      code: "INVALID_TOKEN"
+    });
   }
 };
 var requireAdmin = (req, res, next) => {
   if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
+    return res.status(401).json({
+      message: "Authentication required",
+      code: "AUTH_REQUIRED"
+    });
   }
   if (!req.user.isAdmin) {
-    return res.status(403).json({ message: "Admin access required" });
+    return res.status(403).json({
+      message: "Admin access required",
+      code: "ADMIN_REQUIRED"
+    });
   }
   next();
 };
@@ -712,6 +804,100 @@ async function registerRoutes(app2) {
   apiRouter.post("/auth/register", register);
   apiRouter.post("/auth/google", googleAuthMock);
   apiRouter.post("/auth/google-token", handleGoogleAuth);
+  apiRouter.get("/winners/recent", async (_req, res) => {
+    try {
+      const recentWinners = await storage.getRecentWinners();
+      const winnersWithInfo = await Promise.all(
+        recentWinners.map(async (winner, index) => {
+          const user = await storage.getUser(winner.userId);
+          const tournament = await storage.getTournament(winner.tournamentId);
+          return {
+            ...winner,
+            rank: index + 1,
+            username: user?.username,
+            tournamentName: tournament?.name
+          };
+        })
+      );
+      res.json(winnersWithInfo);
+    } catch (error) {
+      console.error("Error in /api/winners/recent:", error);
+      res.status(500).json({
+        message: "Failed to fetch recent winners",
+        code: "FETCH_ERROR"
+      });
+    }
+  });
+  apiRouter.get("/tournaments/live", async (_req, res) => {
+    try {
+      const now = /* @__PURE__ */ new Date();
+      const tournaments2 = await storage.getAllTournaments();
+      const liveTournaments = tournaments2.filter((t) => {
+        const startTime = new Date(t.startTime);
+        const endTime = new Date(t.endTime);
+        return startTime <= now && endTime >= now;
+      });
+      const tournamentsWithCounts = await Promise.all(
+        liveTournaments.map(async (tournament) => {
+          const participants2 = await storage.getParticipantsByTournament(tournament.id);
+          return {
+            id: tournament.id,
+            name: tournament.name,
+            startTime: tournament.startTime,
+            endTime: tournament.endTime,
+            entryFee: tournament.entryFee,
+            prizePool: tournament.prizePool,
+            description: tournament.description,
+            participantCount: participants2.length,
+            totalSlots: tournament.totalSlots,
+            rules: tournament.rules,
+            resultPublished: tournament.resultPublished
+          };
+        })
+      );
+      res.json(tournamentsWithCounts);
+    } catch (error) {
+      console.error("Error in /tournaments/live:", error);
+      res.status(500).json({
+        message: "Failed to fetch live tournaments",
+        code: "FETCH_ERROR"
+      });
+    }
+  });
+  apiRouter.get("/tournaments/upcoming", async (_req, res) => {
+    try {
+      const now = /* @__PURE__ */ new Date();
+      const tournaments2 = await storage.getAllTournaments();
+      const upcomingTournaments = tournaments2.filter((t) => {
+        const startTime = new Date(t.startTime);
+        return startTime > now;
+      });
+      const tournamentsWithCounts = await Promise.all(
+        upcomingTournaments.map(async (tournament) => {
+          const participants2 = await storage.getParticipantsByTournament(tournament.id);
+          return {
+            id: tournament.id,
+            name: tournament.name,
+            startTime: tournament.startTime,
+            endTime: tournament.endTime,
+            entryFee: tournament.entryFee,
+            prizePool: tournament.prizePool,
+            description: tournament.description,
+            participantCount: participants2.length,
+            totalSlots: tournament.totalSlots,
+            rules: tournament.rules
+          };
+        })
+      );
+      res.json(tournamentsWithCounts);
+    } catch (error) {
+      console.error("Error in /tournaments/upcoming:", error);
+      res.status(500).json({
+        message: "Failed to fetch upcoming tournaments",
+        code: "FETCH_ERROR"
+      });
+    }
+  });
   apiRouter.post("/auth/create-admin", async (req, res) => {
     try {
       const { username, email, password } = req.body;
@@ -773,23 +959,8 @@ async function registerRoutes(app2) {
       const tournaments2 = await storage.getAllTournaments();
       res.json(tournaments2);
     } catch (error) {
-      res.status(500).json({ message: "Server error" });
-    }
-  });
-  apiRouter.get("/tournaments/live", async (req, res) => {
-    try {
-      const tournaments2 = await storage.getLiveTournaments();
-      res.json(tournaments2);
-    } catch (error) {
-      res.status(500).json({ message: "Server error" });
-    }
-  });
-  apiRouter.get("/tournaments/upcoming", async (req, res) => {
-    try {
-      const tournaments2 = await storage.getUpcomingTournaments();
-      res.json(tournaments2);
-    } catch (error) {
-      res.status(500).json({ message: "Server error" });
+      console.error("Error in /api/tournaments:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
     }
   });
   apiRouter.get("/tournaments/:id", async (req, res) => {
@@ -1179,7 +1350,7 @@ async function registerRoutes(app2) {
       if (!participant || participant.paymentStatus !== "completed") {
         return res.status(403).json({ message: "You must join this tournament first" });
       }
-      const question = await storage.questions.get(questionId);
+      const question = await storage.getQuestion(questionId);
       if (!question) {
         return res.status(404).json({ message: "Question not found" });
       }
@@ -1254,26 +1425,6 @@ async function registerRoutes(app2) {
         })
       );
       res.json(leaderboardWithUserInfo);
-    } catch (error) {
-      res.status(500).json({ message: "Server error" });
-    }
-  });
-  apiRouter.get("/winners/recent", async (req, res) => {
-    try {
-      const recentWinners = await storage.getRecentWinners();
-      const winnersWithInfo = await Promise.all(
-        recentWinners.map(async (winner, index) => {
-          const user = await storage.getUser(winner.userId);
-          const tournament = await storage.getTournament(winner.tournamentId);
-          return {
-            ...winner,
-            rank: index + 1,
-            username: user?.username,
-            tournamentName: tournament?.name
-          };
-        })
-      );
-      res.json(winnersWithInfo);
     } catch (error) {
       res.status(500).json({ message: "Server error" });
     }
@@ -1495,13 +1646,30 @@ function serveStatic(app2) {
 
 // server/index.ts
 import cors from "cors";
+import { createProxyMiddleware } from "http-proxy-middleware";
 var app = express3();
 app.use(cors({
-  origin: process.env.NODE_ENV === "production" ? ["https://your-frontend-domain.com"] : ["http://localhost:3000"],
-  credentials: true
+  origin: process.env.FRONTEND_URL || true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
-app.use(express3.json());
-app.use(express3.urlencoded({ extended: false }));
+app.use(express3.json({ limit: "10mb" }));
+app.use(express3.urlencoded({ extended: true, limit: "10mb" }));
+app.use((err, _req, res, next) => {
+  console.error("Error:", err);
+  if (err instanceof SyntaxError && "body" in err) {
+    return res.status(400).json({ message: "Invalid JSON" });
+  }
+  next(err);
+});
+var proxyOptions = {
+  target: "https://extensions.aitopia.ai",
+  changeOrigin: true,
+  pathRewrite: { "^/api/external": "" },
+  logLevel: "error"
+};
+app.use("/api/external", createProxyMiddleware(proxyOptions));
 app.use((req, res, next) => {
   const start = Date.now();
   const path3 = req.path;
@@ -1527,24 +1695,46 @@ app.use((req, res, next) => {
   next();
 });
 (async () => {
-  const server = await registerRoutes(app);
-  app.use((err, _req, res, _next) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    res.status(status).json({ message });
-    throw err;
-  });
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+  try {
+    const server = await registerRoutes(app);
+    app.use((err, _req, res, _next) => {
+      console.error("Error stack:", err.stack);
+      const status = err.status || err.statusCode || 500;
+      const message = err.message || "Internal Server Error";
+      res.status(status).json({ message });
+    });
+    if (app.get("env") === "development") {
+      await setupVite(app, server);
+    } else {
+      serveStatic(app);
+    }
+    const port = process.env.PORT || 5e3;
+    server.listen({
+      port,
+      host: "0.0.0.0",
+      reusePort: true
+    }, () => {
+      log(`Server is running on port ${port}`);
+    });
+    server.on("error", (error) => {
+      if (error.syscall !== "listen") {
+        throw error;
+      }
+      switch (error.code) {
+        case "EACCES":
+          console.error(`Port ${port} requires elevated privileges`);
+          process.exit(1);
+          break;
+        case "EADDRINUSE":
+          console.error(`Port ${port} is already in use`);
+          process.exit(1);
+          break;
+        default:
+          throw error;
+      }
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
   }
-  const port = 5e3;
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true
-  }, () => {
-    log(`serving on port ${port}`);
-  });
 })();

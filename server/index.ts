@@ -19,11 +19,15 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Enable cookie parsing
-app.use(express.cookieParser());
+// app.use(express.cookieParser());
 
 // Enable session management
-app.use(express.session({
-  secret: process.env.SESSION_SECRET ||
+// app.use(express.session({
+//   secret: process.env.SESSION_SECRET || "your-secret-key",
+//   resave: false,
+//   saveUninitialized: false
+// }));
+
 // Add error handling middleware
 app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
   console.error('Error:', err);
