@@ -16,9 +16,8 @@ import connectPg from "connect-pg-simple";
 import session from "express-session";
 
 // server/db.ts
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-serverless";
-import ws from "ws";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
 
 // shared/schema.ts
 var schema_exports = {};
@@ -181,69 +180,15 @@ var insertUserResponseSchema = createInsertSchema(userResponses).omit({
 });
 
 // server/db.ts
-var WebSocketWithRetry = class _WebSocketWithRetry extends ws {
-  maxRetries = 5;
-  retryCount = 0;
-  retryDelay = 1e3;
-  wsUrl;
-  wsOptions;
-  constructor(url, options) {
-    super(url, options);
-    this.wsUrl = url;
-    this.wsOptions = options;
-    this.addEventListener("error", this.handleError.bind(this));
-  }
-  handleError(error) {
-    console.error("WebSocket error:", error.message);
-    if (this.retryCount < this.maxRetries) {
-      const delay = this.retryDelay * Math.pow(2, this.retryCount);
-      console.log(`Retrying connection in ${delay}ms... (Attempt ${this.retryCount + 1}/${this.maxRetries})`);
-      setTimeout(() => {
-        this.retryCount++;
-        new _WebSocketWithRetry(this.wsUrl, this.wsOptions);
-      }, delay);
-    } else {
-      console.error("Max retries reached. Please check your database connection.");
-    }
-  }
-};
-neonConfig.webSocketConstructor = WebSocketWithRetry;
 if (!process.env.DATABASE_URL) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?"
   );
 }
-var connectionString = process.env.DATABASE_URL;
-console.log("Connecting to database...");
 var pool = new Pool({
-  connectionString,
-  ssl: true,
-  max: 20,
-  // maximum number of clients in the pool
-  idleTimeoutMillis: 3e4,
-  // how long a client is allowed to remain idle before being closed
-  connectionTimeoutMillis: 5e3,
-  // how long to wait for a connection
-  maxUses: 7500
-  // close & replace a connection after it's been used this many times
+  connectionString: process.env.DATABASE_URL
 });
-var connectWithRetry = async (retries = 5) => {
-  try {
-    const client = await pool.connect();
-    console.log("Database connected successfully");
-    client.release();
-  } catch (err) {
-    if (retries > 0) {
-      console.log(`Retrying database connection... (${retries} attempts left)`);
-      await new Promise((resolve) => setTimeout(resolve, 2e3));
-      return connectWithRetry(retries - 1);
-    }
-    console.error("Database connection error:", err);
-    throw err;
-  }
-};
-connectWithRetry().catch(console.error);
-var db = drizzle({ client: pool, schema: schema_exports });
+var db = drizzle(pool, { schema: schema_exports });
 
 // server/storage.ts
 import { eq, desc, and, isNull, not } from "drizzle-orm";
