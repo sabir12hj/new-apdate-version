@@ -52,6 +52,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // TEMPORARY: Force admin privilege for admin@example.com
+  apiRouter.post("/auth/force-admin", async (req: Request, res: Response) => {
+    try {
+      const email = "admin@example.com";
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({ message: "Admin user not found" });
+      }
+      if (user.isAdmin) {
+        return res.json({ message: "User is already admin" });
+      }
+      await storage.updateUserProfile(user.id, { isAdmin: true });
+      res.json({ message: "Admin privileges granted to admin@example.com" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update admin user", error: error.message });
+    }
+  });
+
   // Public routes that don't require authentication
   apiRouter.get("/winners/recent", async (_req: Request, res: Response) => {
     try {
