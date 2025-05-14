@@ -136,3 +136,5 @@ export const canAccessTournament = async (req: AuthenticatedRequest, res: Respon
   req.participant = participant;
   next();
 };
+
+export type { AuthenticatedRequest } from './types';

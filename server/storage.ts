@@ -107,7 +107,14 @@ export class MemStorage implements IStorage {
       isAdmin: true,
       wallet: "1000",
       createdAt: new Date(),
-      googleId: null
+      googleId: null,
+      fullName: null,
+      mobileNumber: null,
+      accountNumber: null,
+      accountIfsc: null,
+      upiId: null,
+      profilePhoto: null,
+      telegramId: null
     };
     this.users.set(adminUser.id, adminUser);
     
@@ -251,7 +258,15 @@ export class MemStorage implements IStorage {
       id, 
       isAdmin,
       wallet: "0",
-      createdAt: new Date() 
+      createdAt: new Date(),
+      googleId: insertUser.googleId ?? null,
+      fullName: insertUser.fullName ?? null,
+      mobileNumber: insertUser.mobileNumber ?? null,
+      accountNumber: insertUser.accountNumber ?? null,
+      accountIfsc: insertUser.accountIfsc ?? null,
+      upiId: insertUser.upiId ?? null,
+      profilePhoto: insertUser.profilePhoto ?? null,
+      telegramId: insertUser.telegramId ?? null
     };
     this.users.set(id, user);
     return user;
@@ -361,8 +376,12 @@ export class MemStorage implements IStorage {
     
     // Sort by score (desc) and time taken (asc)
     participants.sort((a, b) => {
-      if (a.score !== b.score) return b.score - a.score;
-      return a.timeTaken - b.timeTaken;
+      const aScore = a.score ?? 0;
+      const bScore = b.score ?? 0;
+      if (aScore !== bScore) return bScore - aScore;
+      const aTime = a.timeTaken ?? Number.MAX_SAFE_INTEGER;
+      const bTime = b.timeTaken ?? Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
     });
     
     // Distribute prizes (simplified)
@@ -468,6 +487,7 @@ export class MemStorage implements IStorage {
     const participant: Participant = {
       ...insertParticipant,
       id,
+      paymentStatus: insertParticipant.paymentStatus ?? "pending",
       score: 0,
       timeTaken: 0,
       prize: "0",
@@ -524,6 +544,7 @@ export class MemStorage implements IStorage {
     const payment: Payment = {
       ...insertPayment,
       id,
+      transactionId: insertPayment.transactionId ?? null,
       createdAt: new Date()
     };
     this.payments.set(id, payment);
@@ -578,8 +599,12 @@ export class MemStorage implements IStorage {
     return participants
       .filter(participant => participant.hasAttempted)
       .sort((a, b) => {
-        if (a.score !== b.score) return b.score - a.score;
-        return a.timeTaken - b.timeTaken;
+        const aScore = a.score ?? 0;
+        const bScore = b.score ?? 0;
+        if (aScore !== bScore) return bScore - aScore;
+        const aTime = a.timeTaken ?? Number.MAX_SAFE_INTEGER;
+        const bTime = b.timeTaken ?? Number.MAX_SAFE_INTEGER;
+        return aTime - bTime;
       });
   }
   
@@ -843,7 +868,15 @@ export class DatabaseStorage implements IStorage {
 
   // Participant operations
   async addParticipant(participant: InsertParticipant): Promise<Participant> {
-    const [newParticipant] = await db.insert(participants).values(participant).returning();
+    const [newParticipant] = await db.insert(participants).values({
+      ...participant,
+      paymentStatus: participant.paymentStatus ?? "pending",
+      score: 0,
+      timeTaken: 0,
+      prize: "0",
+      hasAttempted: false,
+      createdAt: new Date()
+    }).returning();
     return newParticipant;
   }
 
@@ -861,7 +894,6 @@ export class DatabaseStorage implements IStorage {
           eq(participants.tournamentId, tournamentId)
         )
       );
-    
     return participant || undefined;
   }
 
@@ -956,7 +988,7 @@ export class DatabaseStorage implements IStorage {
       .from(participants)
       .where(not(eq(participants.prize, '0')))
       .orderBy(desc(participants.createdAt))
-      .limit(5);
+      .limit(10);
 
     return winners;
   }

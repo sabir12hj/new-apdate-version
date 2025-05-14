@@ -143,6 +143,8 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
     
     // Remove sensitive data before sending response
     const { password: _, ...userData } = user;
+    // Ensure isAdmin is boolean
+    userData.isAdmin = !!userData.isAdmin;
 
     return res.json({
       message: 'Login successful',
@@ -195,8 +197,8 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     const token = generateToken(user);
     
     // Remove sensitive data before sending response
-    const { password: _, ...cleanUserData } = user;
-
+    const { password: __, ...cleanUserData } = user;
+    cleanUserData.isAdmin = !!cleanUserData.isAdmin;
     return res.status(201).json({
       message: 'Registration successful',
       user: cleanUserData,

@@ -56,6 +56,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
         if (response.ok) {
           const data = await response.json();
+          // Ensure isAdmin is always boolean
+          data.user.isAdmin = !!data.user.isAdmin;
           console.log('User authenticated successfully:', data.user);
           console.log('User admin status:', data.user.isAdmin);
           setUser(data.user);
@@ -80,6 +82,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const response = await apiRequest("POST", "/api/auth/login", { email, password });
       const data = await response.json();
       
+      // Ensure isAdmin is always boolean
+      data.user.isAdmin = !!data.user.isAdmin;
       console.log('Login successful, user data:', data.user);
       console.log('Admin status:', data.user.isAdmin);
       
@@ -113,6 +117,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       
       const data = await response.json();
       
+      // Ensure isAdmin is always boolean
+      data.user.isAdmin = !!data.user.isAdmin;
       setUser(data.user);
       localStorage.setItem("token", data.token);
       
@@ -142,6 +148,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       
       const data = await response.json();
       
+      // Ensure isAdmin is always boolean
+      data.user.isAdmin = !!data.user.isAdmin;
       setUser(data.user);
       localStorage.setItem("token", data.token);
       
@@ -174,7 +182,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       value={{
         user,
         isAuthenticated: !!user,
-        isAdmin: user?.isAdmin || false,
+        isAdmin: !!user?.isAdmin,
         isLoading,
         login,
         register,

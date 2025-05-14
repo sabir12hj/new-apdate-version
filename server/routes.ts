@@ -34,12 +34,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Hash password
       const bcrypt = require("bcryptjs");
       const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
+      const adminHashedPassword = await bcrypt.hash(password, salt);
       // Create admin user
       const userData = {
         username,
         email,
-        password: hashedPassword,
+        password: adminHashedPassword,
         isAdmin: true,
       };
       const adminUser = await storage.createUser(userData, true);
@@ -48,7 +48,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         user: { username, email, password: "admin123" },
       });
     } catch (error) {
-      res.status(500).json({ message: "Failed to create admin user", error: error.message });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: "Failed to create admin user", error: errMsg });
     }
   });
 
@@ -66,7 +67,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateUserProfile(user.id, { isAdmin: true });
       res.json({ message: "Admin privileges granted to admin@example.com" });
     } catch (error) {
-      res.status(500).json({ message: "Failed to update admin user", error: error.message });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: "Failed to update admin user", error: errMsg });
     }
   });
 
@@ -126,7 +128,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             description: tournament.description,
             participantCount: participants.length,
             totalSlots: tournament.totalSlots,
-            rules: tournament.rules,
             resultPublished: tournament.resultPublished
           };
         })
@@ -167,8 +168,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             prizePool: tournament.prizePool,
             description: tournament.description,
             participantCount: participants.length,
-            totalSlots: tournament.totalSlots,
-            rules: tournament.rules
+            totalSlots: tournament.totalSlots
           };
         })
       );
@@ -205,13 +205,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Hash password
       const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
+      const adminHashedPassword = await bcrypt.hash(password, salt);
       
       // Create user with normal insertUserSchema fields
       const userData = {
         username,
         email,
-        password: hashedPassword,
+        password: adminHashedPassword,
         googleId: null as string | null, // Explicitly set as null
         fullName: null as string | null,
         mobileNumber: null as string | null,
@@ -230,14 +230,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Return user (excluding password) and token
       const { password: _, ...userDataWithoutPassword } = adminUser;
-      
+      userDataWithoutPassword.isAdmin = !!userDataWithoutPassword.isAdmin;
       res.status(201).json({
         user: userDataWithoutPassword,
         token
       });
-    } catch (error) {
-      console.error('Admin creation error:', error);
-      res.status(500).json({ message: 'Server error' });
+    } catch (error: any) {
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      console.error('Admin creation error:', errMsg);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
   
@@ -252,12 +253,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Return user data excluding the password
       const { password, ...userData } = user;
+      userData.isAdmin = !!userData.isAdmin;
       
       return res.json({
         user: userData
       });
-    } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+    } catch (error: any) {
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -268,8 +271,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tournaments = await storage.getAllTournaments();
       res.json(tournaments);
     } catch (error) {
-      console.error("Error in /api/tournaments:", error);
-      res.status(500).json({ message: "Server error", error: error.message });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      console.error("Error in /api/tournaments:", errMsg);
+      res.status(500).json({ message: "Server error", error: errMsg });
     }
   });
 
@@ -289,7 +293,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(tournament);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -304,7 +309,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const validationError = fromZodError(error);
         return res.status(400).json({ message: validationError.message });
       }
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -331,7 +337,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const validationError = fromZodError(error);
         return res.status(400).json({ message: validationError.message });
       }
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -351,7 +358,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({ message: 'Tournament deleted successfully' });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -370,7 +378,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({ message: 'Results published successfully', tournament });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -391,7 +400,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(quiz);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -419,7 +429,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const validationError = fromZodError(error);
         return res.status(400).json({ message: validationError.message });
       }
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -446,7 +457,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const validationError = fromZodError(error);
         return res.status(400).json({ message: validationError.message });
       }
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -466,7 +478,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({ message: 'Quiz deleted successfully' });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -489,7 +502,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(sanitizedQuestions);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -504,7 +518,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const questions = await storage.getQuestionsByQuiz(quizId);
       res.json(questions);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -526,7 +541,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const validationError = fromZodError(error);
         return res.status(400).json({ message: validationError.message });
       }
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -553,7 +569,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const validationError = fromZodError(error);
         return res.status(400).json({ message: validationError.message });
       }
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -573,7 +590,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({ message: 'Question deleted successfully' });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -664,7 +682,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({ message: 'Tournament joined successfully', payment });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -698,7 +717,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(participantsWithUserInfo);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -762,7 +782,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalQuestions: questions.length
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -822,7 +843,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         correctAnswer: question.correctAnswer
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -865,7 +887,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         timeTaken: totalTimeTaken
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -905,7 +928,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(leaderboardWithUserInfo);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -924,7 +948,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         wallet: user.wallet
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -948,7 +973,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         wallet: user.wallet
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -967,7 +993,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(userProfile);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -1001,7 +1028,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         profile: userProfile
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -1031,7 +1059,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: 'Profile photo updated successfully'
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
@@ -1059,7 +1088,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalRevenue
       });
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      const errMsg = (error instanceof Error) ? error.message : String(error);
+      res.status(500).json({ message: 'Server error', error: errMsg });
     }
   });
 
